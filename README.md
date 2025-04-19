@@ -1,6 +1,3 @@
-Sure! Based on the information you've provided, here's a draft for the README file:
-
----
 
 # CurrencyConverter
 
