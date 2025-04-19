@@ -5,10 +5,13 @@
  * 
  */
 using CurrencyConverter;
+using static CurrencyConverter.TableRenderer;
 using static CurrencyConverter.ExchangeRates;
-using static CurrencyConverter.APIUpdate;
 using static CurrencyConverter.CommonCurrency;
 using Spectre.Console;
+
+int[] cacheDurationHours = [2, 4, 6, 8, 10, 12, 24]; // default cache durations in hours
+bool loadFromCache = false; // flag to check if this is the first run of the program
 
 // Writes the title of the program in a fancy font
 AnsiConsole.Write(
@@ -16,8 +19,25 @@ AnsiConsole.Write(
         .Centered()
         .Color(Color.Green));
 
-// creates a new APIResponse object to hold the exchange rates from the WEB API
-APIResponse exchangeRates = FetchExchangeRates();
+// prompt the user for their API key
+var apiKey = AnsiConsole.Prompt(
+    new TextPrompt<string>("Please input your API key? [green][/]")
+        .PromptStyle("green")
+        .AllowEmpty()
+        .Secret());
+
+if (apiKey == "")
+{
+    // if the user has not provided an API key, load from cache
+    loadFromCache = true;
+    AnsiConsole.MarkupLine("[yellow]No API key provided. Loading from cache...[/]");
+}
+
+// prompt the user for the cache duration
+int cacheDuration = AnsiConsole.Prompt(
+    new SelectionPrompt<int>()
+        .Title("Select a cache duration for updates:")
+        .AddChoices(cacheDurationHours));
 
 // ask user for currency type to convert from
 Currency selectedCurrency = AnsiConsole.Prompt(
@@ -30,55 +50,46 @@ var amount = AnsiConsole.Prompt(
         new TextPrompt<double>("What is the amount you want to convert? [green](e.g. 100)[/]")
             .PromptStyle("green"));
 
-// starts a live display of the exchange rates
-AnsiConsole.Live(new Panel(new Table()))
-           .Start(ctx =>
-           {
-               
-               while (true)
-               {
-                   // run update for api to ensure the most up to date data
-                   Update(exchangeRates);
+// fetch exchange rates from the API
+var exchangeRates = FetchExchangeRates(apiKey, cacheDuration, loadFromCache);
 
-                   var table = new Table().Centered()
-                       .Border(TableBorder.Rounded)
-                       .Title("[bold]USD Exchange Rates[/]")
-                       .AddColumn("[yellow]Currency[/]")
-                       .AddColumn("[green]Rate[/]")
-                       .AddColumn(Enum.GetName(typeof(Currency), selectedCurrency) + " Amount")
-                       .AddColumn("[green]Converted Amount[/]");
 
-                   foreach (var rate in exchangeRates.conversion_rates.GetType().GetProperties())
-                   {
-                       if (rate.Name == Enum.GetName(typeof(Currency), selectedCurrency))
-                       {
-                           continue; // Skip the selected currency
-                       }
+// check if the exchange rates are valid
+if (exchangeRates == null)
+{
+    AnsiConsole.MarkupLine("[red]Failed to fetch exchange rates.[/]");
+    AnsiConsole.MarkupLine("[red]Please check your API key and try again.[/]");
+    // wait for user to acknowledge the error
+    AnsiConsole.MarkupLine("[red]Press any key to exit...[/]");
+    Console.ReadKey();
+    AnsiConsole.MarkupLine("[red]Exiting the program...[/]");
+    Environment.Exit(1);
+}
 
-                       // check if the rate is a valid currency
-                       if (!Enum.TryParse(typeof(Currency), rate.Name, out _))
-                       {
-                           continue; // Skip if not a valid currency
-                       }
+RenderTable(selectedCurrency, exchangeRates, amount);
 
-                       var currency = rate.Name;
-                       var value = rate.GetValue(exchangeRates.conversion_rates);
-                       var symbol = CurrencyConverterUtil.GetCurrencySymbol(rate.Name);
-                       double convertedValue = Convert.ToDouble(value) * amount;
-                       // clamp to 2 decimal places
-                       convertedValue = Math.Abs(Math.Round(convertedValue, 2));
-                       table.AddRow($"[green]{currency}[/]", $"[green]{symbol}{value}[/]", $"[green]{amount}[/]", $"[green]{symbol}{convertedValue}[/]");
-                   }
+while (true)
+{
+    // ask user if they want to convert another currency
+    var convertAnother = AnsiConsole.Prompt(
+        new SelectionPrompt<string>()
+            .Title("Do you want to convert another currency?")
+            .AddChoices(new[] { "Yes", "No" }));
+    if (convertAnother == "No")
+    {
+        AnsiConsole.MarkupLine("[green]Exiting the program...[/]");
+        break;
+    }
+    // ask user for currency type to convert from
+    selectedCurrency = AnsiConsole.Prompt(
+       new SelectionPrompt<Currency>()
+           .Title("What currency do you want to convert from?")
+           .AddChoices(Enum.GetValues(typeof(Currency)).Cast<Currency>()));
+    // ask user for amount
+    amount = AnsiConsole.Prompt(
+        new TextPrompt<double>("What is the amount you want to convert? [green](e.g. 100)[/]")
+            .PromptStyle("green"));
+    RenderTable(selectedCurrency, exchangeRates, amount);
+}
 
-                   var updated = new Panel(Align.Center(table))
-                       .Header($"[grey]Updated: {DateTime.Now:T}[/]", Justify.Right)
-                       .BorderColor(Color.Grey);
-
-                   ctx.UpdateTarget(updated);
-
-                   Task.Delay(1000); // Refresh every 10000 ms
-
-                   // check if user pressed q
-               } while (true);
-           });
 
